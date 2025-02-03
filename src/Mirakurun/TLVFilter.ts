@@ -90,6 +90,9 @@ export default class TLVFilter extends EventEmitter {
 
     private _reader: MMTTLVReader;
 
+    // raw leftover input TS buffer
+    private _buffer: Buffer;
+
     // output
     private _output: Writable;
 
@@ -137,6 +140,7 @@ export default class TLVFilter extends EventEmitter {
         super();
 
         this._reader = createMMTTLVReader();
+        this._buffer = Buffer.from([]);
         this._targetNetworkId = options.networkId || null;
         this._provideServiceId = options.serviceId || null;
         this._provideEventId = options.eventId || null;
@@ -216,10 +220,76 @@ export default class TLVFilter extends EventEmitter {
         if (this._closed) {
             throw new Error("TLVFilter has closed already");
         }
-        this._reader.push(chunk);
-        if (this._ready) {
-            this._output.write(chunk);
+
+        const bin = Buffer.concat([this._buffer, chunk]);
+
+        const ts_init_byte = bin.indexOf(0x47); // magic byte for TS packet
+        const bin2 = bin.slice(ts_init_byte);
+
+        const packets: Buffer[] = [];
+
+        for (let i = 0; i < bin2.length; i += 188) {
+            const packet = bin2.slice(i, i + 188);
+            if (packet.length !== 188) {
+                this._buffer = packet;
+                break;
+            } else {
+                const data = packet;
+
+                const sync_byte = data[0];
+                if (sync_byte !== 0x47) {
+                    // invalid ts packet
+                    const offset = data.indexOf(0x47);
+                    i += offset;
+                    continue;
+                }
+                const pid = (data[1] & 0b0001_1111) << 8 | data[2];
+                if (pid === 0x2d) {
+                    // wrapped tlv packet
+                    const payload_unit_start_indicator = (data[1] & 0b0100_0000) >> 6;
+                    const tlv_chunk: Buffer = payload_unit_start_indicator === 1 ? data.slice(4) : data.slice(3);
+                    this._reader.push(tlv_chunk);
+                    if (this._ready) {
+                        this._output.write(tlv_chunk);
+                    }
+                } else {
+                    // packet is not TLV stream data
+                    // ex) TSMF header packet
+                }
+            }
+            // packets.push(packet);
         }
+
+        for (const data of packets) {
+            const sync_byte = data[0];
+            if (sync_byte !== 0x47) {
+                // invalid ts packet
+                console.log(data);
+                throw new Error("TLVFilter#write: invalid TS packet");
+            }
+            const pid = (data[1] & 0b0001_1111) << 8 | data[2];
+            if (pid === 0x2d) {
+                // wrapped tlv packet
+                const payload_unit_start_indicator = (data[1] & 0b0100_0000) >> 6;
+                const tlv_chunk: Buffer = payload_unit_start_indicator === 1 ? data.slice(4) : data.slice(3);
+                // if (payload_unit_start_indicator === 1) {
+                //     tlv_chunk = data.slice(4);
+                // } else {
+                //     tlv_chunk = data.slice(3);
+                // }
+                this._reader.push(tlv_chunk);
+                if (this._ready) {
+                    this._output.write(tlv_chunk);
+                }
+            } else {
+                // packet is not TLV stream data
+            }
+        }
+
+        // this._reader.push(chunk);
+        // if (this._ready) {
+        //     this._output.write(chunk);
+        // }
     }
 
     end(): void {
