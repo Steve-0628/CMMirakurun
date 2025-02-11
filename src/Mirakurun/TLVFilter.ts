@@ -240,7 +240,7 @@ export default class TLVFilter extends EventEmitter {
                 if (sync_byte !== 0x47) {
                     // invalid ts packet
                     const offset = data.indexOf(0x47);
-                    i += offset;
+                    i = i + offset - 188;
                     continue;
                 }
                 const pid = (data[1] & 0b0001_1111) << 8 | data[2];
