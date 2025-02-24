@@ -79,7 +79,7 @@ export default class TSDecoder extends stream.Writable {
             this._timeout = setTimeout(() => {
                 log.warn("TSDecoder#%d process will force killed because no respond...", this._id);
                 this._dead();
-            }, 1500);
+            }, 10000);
         }
 
         this._writable.write(chunk);

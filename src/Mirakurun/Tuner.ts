@@ -381,7 +381,7 @@ export default class Tuner {
                         if (user.disableDecoder === true || device.tlvDecoder === null) {
                             output = dest;
                         } else {
-                            output = new TSDecoder({
+                            output = new TSDecoder({ // TLVDecoder
                                 output: dest,
                                 command: device.tlvDecoder
                             });

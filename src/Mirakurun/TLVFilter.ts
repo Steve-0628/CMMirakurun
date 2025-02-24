@@ -222,74 +222,42 @@ export default class TLVFilter extends EventEmitter {
         }
 
         const bin = Buffer.concat([this._buffer, chunk]);
+        const ts_init_byte = bin.indexOf(0x47);
 
-        const ts_init_byte = bin.indexOf(0x47); // magic byte for TS packet
+        // TSの同期バイトが見つからなければバッファに保持して処理を中断
+        if (ts_init_byte === -1) {
+            this._buffer = bin;
+            return;
+        }
         const bin2 = bin.slice(ts_init_byte);
-
-        const packets: Buffer[] = [];
+        this._buffer = Buffer.from([]); // バッファをリセット
 
         for (let i = 0; i < bin2.length; i += 188) {
             const packet = bin2.slice(i, i + 188);
             if (packet.length !== 188) {
+                // パケット長が足りなければバッファに保持
                 this._buffer = packet;
                 break;
-            } else {
-                const data = packet;
-
-                const sync_byte = data[0];
-                if (sync_byte !== 0x47) {
-                    // invalid ts packet
-                    const offset = data.indexOf(0x47);
-                    i = i + offset - 188;
-                    continue;
-                }
-                const pid = (data[1] & 0b0001_1111) << 8 | data[2];
-                if (pid === 0x2d) {
-                    // wrapped tlv packet
-                    const payload_unit_start_indicator = (data[1] & 0b0100_0000) >> 6;
-                    const tlv_chunk: Buffer = payload_unit_start_indicator === 1 ? data.slice(4) : data.slice(3);
-                    this._reader.push(tlv_chunk);
-                    if (this._ready) {
-                        this._output.write(tlv_chunk);
-                    }
-                } else {
-                    // packet is not TLV stream data
-                    // ex) TSMF header packet
-                }
             }
-            // packets.push(packet);
-        }
-
-        for (const data of packets) {
-            const sync_byte = data[0];
-            if (sync_byte !== 0x47) {
-                // invalid ts packet
-                console.log(data);
-                throw new Error("TLVFilter#write: invalid TS packet");
+            if (packet[0] !== 0x47) {
+                // 同期バイトが見つからなかった場合、次の同期バイトを探索
+                log.error("TS to TLV parser: Lost sync to TS packet");
+                const offset = packet.indexOf(0x47);
+                i = i + (offset > 0 ? offset - 188 : 0);
+                continue;
             }
-            const pid = (data[1] & 0b0001_1111) << 8 | data[2];
+            const pid = ((packet[1] & 0b0001_1111) << 8) | packet[2];
             if (pid === 0x2d) {
-                // wrapped tlv packet
-                const payload_unit_start_indicator = (data[1] & 0b0100_0000) >> 6;
-                const tlv_chunk: Buffer = payload_unit_start_indicator === 1 ? data.slice(4) : data.slice(3);
-                // if (payload_unit_start_indicator === 1) {
-                //     tlv_chunk = data.slice(4);
-                // } else {
-                //     tlv_chunk = data.slice(3);
-                // }
+                const payload_unit_start_indicator = (packet[1] & 0b0100_0000) >> 6;
+                const tlv_chunk = payload_unit_start_indicator === 1 ? packet.slice(4) : packet.slice(3);
                 this._reader.push(tlv_chunk);
                 if (this._ready) {
                     this._output.write(tlv_chunk);
                 }
-            } else {
-                // packet is not TLV stream data
             }
+            // Ignore non-TLV TS Packets (ex; TSMF header packet)
         }
 
-        // this._reader.push(chunk);
-        // if (this._ready) {
-        //     this._output.write(chunk);
-        // }
     }
 
     end(): void {
